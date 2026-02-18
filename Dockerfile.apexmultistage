@@ -1,0 +1,10 @@
+FROM alpine:latest AS builder
+RUN apk --no-cache add curl busybox-extras
+# -L follows redirects, -s silent, -o output file
+RUN curl -L -s -o index.html https://capcom.com
+
+FROM busybox
+WORKDIR /usr/share/web
+COPY --from=builder index.html .
+EXPOSE 82
+CMD ["httpd", "-f", "-p", "82"]
