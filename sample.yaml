@@ -1,0 +1,348 @@
+# Cloud Infrastructure Configuration
+# Version: 2.1.0
+# Last Updated: 2024-03-15
+
+project:
+  name: "Nebula Cloud Platform"
+  environment: production
+  region: us-west-2
+  cost_center: "finance-engineering"
+
+# Global defaults using anchors
+defaults:
+  instance: &instance_defaults
+    type: t3.medium
+    disk_size_gb: 100
+    backup_enabled: true
+    monitoring: basic
+    ssh_keys:
+      - admin@company.com
+      - devops@company.com
+  
+  database: &db_defaults
+    engine: postgresql
+    version: 14.8
+    backup_retention_days: 30
+    multi_az: true
+
+# Service definitions
+services:
+  - name: api-gateway
+    <<: *instance_defaults
+    count: 3
+    ports:
+      - 443:https
+      - 80:http
+    environment_variables:
+      LOG_LEVEL: info
+      CORS_ORIGINS: "https://app.nebula.com"
+      RATE_LIMIT: 1000
+    health_check:
+      endpoint: /health
+      interval_seconds: 30
+      timeout_seconds: 5
+      unhealthy_threshold: 3
+  
+  - name: user-service
+    <<: *instance_defaults
+    type: t3.large  # Override default
+    count: 2
+    database:
+      <<: *db_defaults
+      max_connections: 500
+      username: user_svc
+      password_secret: "arn:aws:secretsmanager:us-west-2:123456789:secret:user-db-pw"
+    endpoints:
+      - /api/v1/users
+      - /api/v1/auth
+    features:
+      - two_factor_auth
+      - social_login
+      - rate_limiting
+    deployment:
+      strategy: rolling
+      max_surge: 1
+      max_unavailable: 0
+  
+  - name: payment-processor
+    <<: *instance_defaults
+    type: t3.xlarge
+    count: 1
+    database:
+      <<: *db_defaults
+      engine: mysql
+      version: 8.0
+      encrypted: true
+    security:
+      compliance: pci-dss
+      audit_enabled: true
+      encryption_at_rest: aes-256
+    payment_gateways:
+      stripe:
+        enabled: true
+        mode: live
+        webhook_secret: "whsec_abc123"
+      paypal:
+        enabled: false
+      braintree:
+        enabled: true
+        merchant_id: "merchant_xyz"
+    transaction_limits:
+      daily_max_usd: 10000
+      per_transaction_max_usd: 5000
+      per_transaction_min_usd: 0.50
+
+# Networking configuration
+networking:
+  vpc_cidr: "10.0.0.0/16"
+  subnets:
+    public:
+      - name: public-a
+        cidr: "10.0.1.0/24"
+        availability_zone: us-west-2a
+      - name: public-b
+        cidr: "10.0.2.0/24"
+        availability_zone: us-west-2b
+    private:
+      - name: private-a
+        cidr: "10.0.10.0/24"
+        availability_zone: us-west-2a
+      - name: private-b
+        cidr: "10.0.11.0/24"
+        availability_zone: us-west-2b
+  
+  load_balancers:
+    - name: main-alb
+      type: application
+      listener:
+        port: 443
+        protocol: HTTPS
+        certificate_arn: "arn:aws:acm:us-west-2:123456789:certificate/abc-123"
+      routing:
+        - path: /api/*
+          target_group: api-tg
+          priority: 10
+        - path: /webhook/*
+          target_group: webhook-tg
+          priority: 20
+  
+  firewalls:
+    - name: web-tier
+      rules:
+        - direction: inbound
+          protocol: tcp
+          port: 443
+          source: "0.0.0.0/0"
+          description: "HTTPS from anywhere"
+        - direction: inbound
+          protocol: tcp
+          port: 80
+          source: "0.0.0.0/0"
+          description: "HTTP from anywhere"
+        - direction: inbound
+          protocol: tcp
+          port: 22
+          source: "10.0.0.0/8"
+          description: "SSH from internal networks"
+        - direction: outbound
+          protocol: all
+          destination: "0.0.0.0/0"
+          description: "Allow all outbound"
+
+# Monitoring and alerting
+monitoring:
+  metrics:
+    - name: api_latency
+      threshold_ms: 500
+      severity: warning
+      notification_channels:
+        - slack
+        - pagerduty
+    - name: error_rate
+      threshold_percent: 1.0
+      severity: critical
+      notification_channels:
+        - pagerduty
+        - email
+  
+  dashboards:
+    - name: operations-overview
+      refresh_rate_seconds: 30
+      widgets:
+        - type: line_chart
+          title: "Request Volume (last 24h)"
+          metric: request_count
+          dimensions: ["service", "endpoint"]
+        - type: heatmap
+          title: "Error Distribution by Endpoint"
+          metric: error_count
+          group_by: ["endpoint", "http_status"]
+  
+  log_retention:
+    application_logs: 30 days
+    access_logs: 90 days
+    audit_logs: 365 days
+
+# CI/CD pipelines
+ci_cd:
+  source_control:
+    provider: github
+    repository: nebula/infrastructure
+    branch_protection:
+      - main
+      - staging
+    
+  build_pipelines:
+    - name: build-and-test
+      trigger:
+        branches: [develop, feature/*]
+        paths_ignore: ["*.md", "docs/*"]
+      stages:
+        - name: checkout
+          type: git_clone
+        - name: install_deps
+          type: shell
+          command: "npm ci"
+        - name: lint
+          type: shell
+          command: "npm run lint"
+        - name: unit_tests
+          type: shell
+          command: "npm test"
+        - name: security_scan
+          type: container
+          image: "security-scanner:latest"
+          command: "scan --severity high,critical"
+    
+    - name: deploy-staging
+      trigger:
+        branches: [staging]
+      environment: staging
+      requires_approval: false
+      stages:
+        - name: build
+          type: docker_build
+          args:
+            tag: "staging-${CI_COMMIT_SHA}"
+        - name: push_registry
+          type: docker_push
+          registry: "123456789.dkr.ecr.us-west-2.amazonaws.com"
+        - name: deploy_kubernetes
+          type: kubectl
+          manifest: "k8s/staging/deployment.yaml"
+          namespace: staging
+    
+    - name: deploy-production
+      trigger:
+        branches: [main]
+      environment: production
+      requires_approval: true
+      approvers:
+        - senior-engineer@nebula.com
+        - devops-lead@nebula.com
+      stages:
+        - name: build
+          type: docker_build
+          args:
+            tag: "prod-${CI_COMMIT_SHA}"
+        - name: push_registry
+          type: docker_push
+        - name: blue_green_deploy
+          type: custom
+          script: |
+            echo "Starting blue-green deployment"
+            kubectl apply -f k8s/production/blue.yaml
+            sleep 30
+            kubectl apply -f k8s/production/green.yaml
+        - name: smoke_tests
+          type: shell
+          command: "./scripts/smoke-test.sh"
+          timeout_minutes: 10
+
+# Infrastructure as Code
+terraform:
+  backend:
+    type: s3
+    bucket: "nebula-terraform-state"
+    key: "prod/infrastructure.tfstate"
+    region: us-west-2
+    encrypt: true
+  
+  modules:
+    - source: "terraform-aws-modules/vpc/aws"
+      version: "5.0.0"
+      configuration:
+        name: "nebula-vpc"
+        cidr: "10.0.0.0/16"
+        enable_nat_gateway: true
+        single_nat_gateway: false
+        enable_vpn_gateway: true
+    
+    - source: "terraform-aws-modules/eks/aws"
+      version: "19.0.0"
+      configuration:
+        cluster_name: "nebula-eks"
+        cluster_version: "1.28"
+        node_groups:
+          - name: general
+            instance_types: ["t3.medium", "t3.large"]
+            desired_size: 3
+            max_size: 10
+            min_size: 2
+          - name: gpu
+            instance_types: ["g4dn.xlarge"]
+            desired_size: 1
+            max_size: 5
+            min_size: 0
+            taints:
+              - key: "nvidia.com/gpu"
+                value: "true"
+                effect: "NO_SCHEDULE"
+
+# Documentation and metadata
+documentation:
+  api:
+    swagger: "https://api.nebula.com/docs/swagger.json"
+    postman_collection: "https://api.nebula.com/postman/collection.json"
+  runbooks:
+    - incident_response: "docs/runbooks/incident-response.md"
+    - database_failover: "docs/runbooks/database-failover.md"
+    - scaling_guide: "docs/runbooks/horizontal-scaling.md"
+  
+  contact:
+    on_call:
+      schedule: "weekly rotation"
+      primary: "+1-555-123-4567"
+      secondary: "+1-555-987-6543"
+    slack_channel: "#nebula-oncall"
+    email_group: "oncall@nebula.com"
+
+# Costs and budgeting
+cost_management:
+  budget_monthly_usd: 50000
+  alerts:
+    - threshold_percent: 80
+      action: notify
+    - threshold_percent: 90
+      action: restrict_noncritical
+    - threshold_percent: 100
+      action: alert_all
+  
+  resource_tagging:
+    required_tags:
+      - Environment: production
+      - CostCenter: finance-engineering
+      - Owner: platform-team
+      - Terraform: true
+    
+  optimization:
+    auto_scaling:
+      enabled: true
+      schedule:
+        - start: "08:00 UTC"
+          end: "20:00 UTC"
+          scale_factor: 1.5
+    spot_instances:
+      enabled: true
+      percentage: 30
+      fallback_to_ondemand: true
