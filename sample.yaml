@@ -299,50 +299,50 @@ terraform:
                 value: "true"
                 effect: "NO_SCHEDULE"
 
-# Documentation and metadata
-documentation:
-  api:
-    swagger: "https://api.nebula.com/docs/swagger.json"
-    postman_collection: "https://api.nebula.com/postman/collection.json"
-  runbooks:
-    - incident_response: "docs/runbooks/incident-response.md"
-    - database_failover: "docs/runbooks/database-failover.md"
-    - scaling_guide: "docs/runbooks/horizontal-scaling.md"
+# # Documentation and metadata
+# documentation:
+#   api:
+#     swagger: "https://api.nebula.com/docs/swagger.json"
+#     postman_collection: "https://api.nebula.com/postman/collection.json"
+#   runbooks:
+#     - incident_response: "docs/runbooks/incident-response.md"
+#     - database_failover: "docs/runbooks/database-failover.md"
+#     - scaling_guide: "docs/runbooks/horizontal-scaling.md"
   
-  contact:
-    on_call:
-      schedule: "weekly rotation"
-      primary: "+1-555-123-4567"
-      secondary: "+1-555-987-6543"
-    slack_channel: "#nebula-oncall"
-    email_group: "oncall@nebula.com"
+#   contact:
+#     on_call:
+#       schedule: "weekly rotation"
+#       primary: "+1-555-123-4567"
+#       secondary: "+1-555-987-6543"
+#     slack_channel: "#nebula-oncall"
+#     email_group: "oncall@nebula.com"
 
-# Costs and budgeting
-cost_management:
-  budget_monthly_usd: 50000
-  alerts:
-    - threshold_percent: 80
-      action: notify
-    - threshold_percent: 90
-      action: restrict_noncritical
-    - threshold_percent: 100
-      action: alert_all
+# # Costs and budgeting
+# cost_management:
+#   budget_monthly_usd: 50000
+#   alerts:
+#     - threshold_percent: 80
+#       action: notify
+#     - threshold_percent: 90
+#       action: restrict_noncritical
+#     - threshold_percent: 100
+#       action: alert_all
   
-  resource_tagging:
-    required_tags:
-      - Environment: production
-      - CostCenter: finance-engineering
-      - Owner: platform-team
-      - Terraform: true
+#   resource_tagging:
+#     required_tags:
+#       - Environment: production
+#       - CostCenter: finance-engineering
+#       - Owner: platform-team
+#       - Terraform: true
     
-  optimization:
-    auto_scaling:
-      enabled: true
-      schedule:
-        - start: "08:00 UTC"
-          end: "20:00 UTC"
-          scale_factor: 1.5
-    spot_instances:
-      enabled: true
-      percentage: 30
-      fallback_to_ondemand: true
+#   optimization:
+#     auto_scaling:
+#       enabled: true
+#       schedule:
+#         - start: "08:00 UTC"
+#           end: "20:00 UTC"
+#           scale_factor: 1.5
+#     spot_instances:
+#       enabled: true
+#       percentage: 30
+#       fallback_to_ondemand: true
